@@ -41,7 +41,7 @@ def test_split_by_words():
     ]
 
 
-def calculate_jaundice_rate(article_words, charged_words):
+def calculate_yellow_press_rate(article_words, charged_words):
     """Расчитывает желтушность текста, принимает список "заряженных" слов и
     ищет их внутри article_words."""
 
@@ -57,11 +57,11 @@ def calculate_jaundice_rate(article_words, charged_words):
     return round(score, 2)
 
 
-def test_calculate_jaundice_rate():
-    assert -0.01 < calculate_jaundice_rate([], []) < 0.01
+def test_calculate_yellow_press_rate():
+    assert -0.01 < calculate_yellow_press_rate([], []) < 0.01
     assert (
         33.0
-        < calculate_jaundice_rate(
+        < calculate_yellow_press_rate(
             ['все', 'аутсайдер', 'побег'], ['аутсайдер', 'банкротство']
         )
         < 34.0
