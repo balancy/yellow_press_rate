@@ -1,0 +1,23 @@
+[tool.poetry]
+name = "jaundice-rate"
+version = "0.1.0"
+description = ""
+authors = ["balancy <balancy@gmail.com>"]
+
+[tool.poetry.dependencies]
+python = "^3.9"
+aiohttp = "^3.8.1"
+pymorphy2 = "^0.9.1"
+beautifulsoup4 = "^4.10.0"
+requests = "^2.27.1"
+pytest = "^7.0.1"
+lxml = "^4.8.0"
+aiofiles = "^0.8.0"
+
+[tool.poetry.dev-dependencies]
+flake8 = "^4.0.1"
+black = "^22.1.0"
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
