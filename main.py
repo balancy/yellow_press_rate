@@ -1,4 +1,5 @@
 import asyncio
+from enum import Enum
 
 import aiofiles
 import aiohttp
@@ -17,7 +18,13 @@ TEST_ARTICLES = [
     'https://inosmi.ru/20220303/yadernoe-oruzhie-253265698.html',
     'https://inosmi.ru/20220303/ukraina-253269849.html',
     'https://inosmi.ru/20220303/torgovlya-253272049.html',
+    'random',
 ]
+
+
+class ProcessingStatus(Enum):
+    OK = 'OK'
+    FETCH_ERROR = 'FETCH_ERROR'
 
 
 async def fetch(session, url):
@@ -41,30 +48,58 @@ async def gather_charged_words(morph):
     return [*negative_words, *positive_words]
 
 
-async def process_article(session, morph, charged_words, url):
-    article_html = await fetch(session, url)
+async def process_article(session, morph, charged_words, url, results):
+    try:
+        article_html = await fetch(session, url)
+    except aiohttp.client_exceptions.InvalidURL:
+        results.append(
+            {
+                'url': url,
+                'status': ProcessingStatus.FETCH_ERROR.value,
+                'rate': None,
+                'words_count': None,
+            }
+        )
+        return
+
     article_text = sanitize(article_html, plaintext=True)
     article_words = split_by_words(morph, article_text)
 
     rate = calculate_yellow_press_rate(article_words, charged_words)
 
-    print('URL:', url)
-    print('Рейтинг:', rate)
-    print('Слов в статье:', len(article_words))
-    print()
+    results.append(
+        {
+            'url': url,
+            'status': ProcessingStatus.OK.value,
+            'rate': rate,
+            'words_count': len(article_words),
+        }
+    )
 
 
 async def main():
     morph = pymorphy2.MorphAnalyzer()
-
     charged_words = await gather_charged_words(morph)
+    results = []
 
     async with aiohttp.ClientSession() as session:
         async with anyio.create_task_group() as tg:
             for url in TEST_ARTICLES:
                 tg.start_soon(
-                    process_article, session, morph, charged_words, url
+                    process_article,
+                    session,
+                    morph,
+                    charged_words,
+                    url,
+                    results,
                 )
+
+    for result in results:
+        print('URL:', result['url'])
+        print('Status', result['status'])
+        print('Rate:', result['rate'])
+        print('Number of words:', result['words_count'])
+        print()
 
 
 asyncio.run(main())
