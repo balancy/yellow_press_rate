@@ -9,7 +9,6 @@ from .html_tools import remove_buzz_attrs, remove_buzz_tags, remove_all_tags
 def sanitize(html, plaintext=False):
     soup = BeautifulSoup(html, 'lxml')
     articles = soup.select('div.layout-article')
-    # articles = soup.select('article.article')
 
     if len(articles) != 1:
         raise ArticleNotFound()
@@ -40,7 +39,6 @@ def test_sanitize():
     resp = requests.get('https://inosmi.ru/economic/20190629/245384784.html')
     resp.raise_for_status()
     clean_text = sanitize(resp.text)
-    # print(clean_text)
 
     assert clean_text.startswith('<div>')
     assert clean_text.endswith('</div>')

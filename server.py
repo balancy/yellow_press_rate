@@ -1,27 +1,32 @@
 from typing import Optional
 from dataclasses import asdict
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 
-from main import analyse_articles
+from articles_handlers import process_articles
 
-TEST_ARTICLES = [
-    'https://inosmi.ru/20220303/kitay-shos-253268048.html',
-    'https://inosmi.ru/20220302/ssha-253253195.html',
-    'https://inosmi.ru/20220303/yadernoe-oruzhie-253265698.html',
-    'https://inosmi.ru/20220303/ukraina-253269849.html',
-    'https://inosmi.ru/20220303/torgovlya-253272049.html',
-    'https://random.random/random.html',
-    'https://lenta.ru/brief/2021/08/26/afg_terror/',
-    'just_some_phrase',
-]
+
+class TooManyUrlsException(Exception):
+    pass
+
 
 app = FastAPI()
 
 
+@app.exception_handler(TooManyUrlsException)
+async def exception_handler(request: Request, exc: TooManyUrlsException):
+    return JSONResponse(
+        status_code=400,
+        content={'error': 'Too many urls in request, should be 10 or less'},
+    )
+
+
 @app.get('/')
 async def read_root(urls: Optional[str]):
-    # http://127.0.0.1:8000/?urls=https://inosmi.ru/20220303/kitay-shos-253268048.html,random,https://lenta.ru/brief/2021/08/26/afg_terror/
-    urls = await analyse_articles(urls.split(','))
+    urls = await process_articles(urls.split(','))
+    if len(urls) > 10:
+        raise TooManyUrlsException()
+
     urls_formatted = [asdict(url) for url in urls]
     return {"urls": urls_formatted}

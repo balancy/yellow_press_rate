@@ -10,9 +10,10 @@ import aiohttp
 import anyio
 import async_timeout
 import pymorphy2
+import pytest
 
-from adapters.exceptions import ArticleNotFound
 from adapters.inosmi_ru import sanitize
+from adapters.exceptions import ArticleNotFound
 from text_tools import calculate_yellow_press_rate, split_by_words
 
 
@@ -32,7 +33,6 @@ class ProcessingStatus(Enum):
 class ArticleAnalyseStats:
     url: str
     status: str
-    time_took: float = 0.0
     rate: Optional[float] = None
     words_count: Optional[int] = None
 
@@ -64,54 +64,35 @@ async def gather_charged_words(morph):
     return [*negative_words, *positive_words]
 
 
-async def process_article(session, morph, charged_words, url, results):
+async def process_article(
+    session, morph, charged_words, url, results, timeout=TIMEOUT
+):
     try:
         article_html = await fetch(session, url)
-    except aiohttp.ClientError:
-        results.append(
-            ArticleAnalyseStats(url, ProcessingStatus.FETCH_ERROR.value)
-        )
-        return
-    except asyncio.exceptions.TimeoutError:
-        results.append(
-            ArticleAnalyseStats(url, ProcessingStatus.TIMEOUT_ERROR.value)
-        )
-        return
-
-    try:
         article_text = sanitize(article_html, plaintext=True)
+        async with async_timeout.timeout(timeout):
+            article_words = await split_by_words(morph, article_text)
+
+    except aiohttp.ClientError:
+        stats = ArticleAnalyseStats(url, ProcessingStatus.FETCH_ERROR.value)
+
+    except asyncio.TimeoutError:
+        stats = ArticleAnalyseStats(url, ProcessingStatus.TIMEOUT_ERROR.value)
+
     except ArticleNotFound:
-        results.append(
-            ArticleAnalyseStats(url, ProcessingStatus.PARSE_ERROR.value)
+        stats = ArticleAnalyseStats(url, ProcessingStatus.PARSE_ERROR.value)
+
+    else:
+        rate = calculate_yellow_press_rate(article_words, charged_words)
+        stats = ArticleAnalyseStats(
+            url, ProcessingStatus.OK.value, rate, len(article_words)
         )
-        return
 
-    with timeit() as t:
-        try:
-            async with async_timeout.timeout(TIMEOUT):
-                article_words = await split_by_words(morph, article_text)
-        except asyncio.TimeoutError:
-            results.append(
-                ArticleAnalyseStats(
-                    url, ProcessingStatus.TIMEOUT_ERROR.value, round(t(), 2)
-                )
-            )
-            return
-
-    rate = calculate_yellow_press_rate(article_words, charged_words)
-
-    results.append(
-        ArticleAnalyseStats(
-            url=url,
-            status=ProcessingStatus.OK.value,
-            time_took=round(t(), 2),
-            rate=rate,
-            words_count=len(article_words),
-        )
-    )
+    finally:
+        results.append(stats)
 
 
-async def analyse_articles(urls):
+async def process_articles(urls):
     morph = pymorphy2.MorphAnalyzer()
     charged_words = await gather_charged_words(morph)
     results = []
@@ -129,3 +110,39 @@ async def analyse_articles(urls):
                 )
 
     return results
+
+
+@pytest.mark.asyncio
+async def test_process_article():
+    morph = pymorphy2.MorphAnalyzer()
+    charged_words = await gather_charged_words(morph)
+
+    async with aiohttp.ClientSession() as session:
+        url = 'https://lenta.ru/brief/2021/08/26/afg_terror/'
+        results = []
+        await process_article(session, morph, charged_words, url, results)
+        [stats] = results
+
+        assert stats == ArticleAnalyseStats(
+            url,
+            ProcessingStatus.PARSE_ERROR.value,
+        )
+
+        url = 'https://inosmi.ru/20220303/kitay-shos-253268048.html'
+        results = []
+        await process_article(session, morph, charged_words, url, results, 0.2)
+        [stats] = results
+        assert stats == ArticleAnalyseStats(
+            url,
+            ProcessingStatus.TIMEOUT_ERROR.value,
+        )
+
+        url = 'random_link'
+        results = []
+        await process_article(session, morph, charged_words, url, results)
+        [stats] = results
+
+        assert stats == ArticleAnalyseStats(
+            url,
+            ProcessingStatus.FETCH_ERROR.value,
+        )
