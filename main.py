@@ -1,11 +1,14 @@
 import asyncio
+from dataclasses import dataclass
 from enum import Enum
+from typing import Optional
 
 import aiofiles
 import aiohttp
 import anyio
 import pymorphy2
 
+from adapters.exceptions import ArticleNotFound
 from adapters.inosmi_ru import sanitize
 from text_tools import calculate_yellow_press_rate, split_by_words
 
@@ -18,13 +21,25 @@ TEST_ARTICLES = [
     'https://inosmi.ru/20220303/yadernoe-oruzhie-253265698.html',
     'https://inosmi.ru/20220303/ukraina-253269849.html',
     'https://inosmi.ru/20220303/torgovlya-253272049.html',
-    'random',
+    'https://random.random/random.html',
+    'https://lenta.ru/brief/2021/08/26/afg_terror/',
+    'just_some_phrase',
 ]
 
 
 class ProcessingStatus(Enum):
     OK = 'OK'
     FETCH_ERROR = 'FETCH_ERROR'
+    PARSE_ERROR = 'PARSE_ERROR'
+    TIMEOUT_ERROR = 'TIMEOUT_ERROR'
+
+
+@dataclass
+class ArticleFetchingStats:
+    url: str
+    status: str
+    rate: Optional[float] = None
+    words_count: Optional[int] = None
 
 
 async def fetch(session, url):
@@ -51,29 +66,33 @@ async def gather_charged_words(morph):
 async def process_article(session, morph, charged_words, url, results):
     try:
         article_html = await fetch(session, url)
-    except aiohttp.client_exceptions.InvalidURL:
+    except aiohttp.ClientError:
         results.append(
-            {
-                'url': url,
-                'status': ProcessingStatus.FETCH_ERROR.value,
-                'rate': None,
-                'words_count': None,
-            }
+            ArticleFetchingStats(url, ProcessingStatus.FETCH_ERROR.value)
+        )
+        return
+    except asyncio.exceptions.TimeoutError:
+        results.append(
+            ArticleFetchingStats(url, ProcessingStatus.TIMEOUT_ERROR.value)
         )
         return
 
-    article_text = sanitize(article_html, plaintext=True)
+    try:
+        article_text = sanitize(article_html, plaintext=True)
+    except ArticleNotFound:
+        results.append(
+            ArticleFetchingStats(url, ProcessingStatus.PARSE_ERROR.value)
+        )
+        return
+
     article_words = split_by_words(morph, article_text)
 
     rate = calculate_yellow_press_rate(article_words, charged_words)
 
     results.append(
-        {
-            'url': url,
-            'status': ProcessingStatus.OK.value,
-            'rate': rate,
-            'words_count': len(article_words),
-        }
+        ArticleFetchingStats(
+            url, ProcessingStatus.OK.value, rate, len(article_words)
+        )
     )
 
 
@@ -95,10 +114,10 @@ async def main():
                 )
 
     for result in results:
-        print('URL:', result['url'])
-        print('Status', result['status'])
-        print('Rate:', result['rate'])
-        print('Number of words:', result['words_count'])
+        print('URL:', result.url)
+        print('Status', result.status)
+        print('Rate:', result.rate)
+        print('Number of words:', result.words_count)
         print()
 
 
