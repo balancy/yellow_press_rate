@@ -2,7 +2,6 @@ import asyncio
 from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import Enum
-import logging
 from time import perf_counter
 from typing import Optional
 
@@ -19,16 +18,6 @@ from text_tools import calculate_yellow_press_rate, split_by_words
 
 NEGATIVE_WORDS_PATH = 'charged_dict/negative_words.txt'
 POSITIVE_WORDS_PATH = 'charged_dict/positive_words.txt'
-TEST_ARTICLES = [
-    'https://inosmi.ru/20220303/kitay-shos-253268048.html',
-    'https://inosmi.ru/20220302/ssha-253253195.html',
-    'https://inosmi.ru/20220303/yadernoe-oruzhie-253265698.html',
-    'https://inosmi.ru/20220303/ukraina-253269849.html',
-    'https://inosmi.ru/20220303/torgovlya-253272049.html',
-    'https://random.random/random.html',
-    'https://lenta.ru/brief/2021/08/26/afg_terror/',
-    'just_some_phrase',
-]
 TIMEOUT = 3
 
 
@@ -104,7 +93,7 @@ async def process_article(session, morph, charged_words, url, results):
         except asyncio.TimeoutError:
             results.append(
                 ArticleAnalyseStats(
-                    url, ProcessingStatus.TIMEOUT_ERROR.value, t()
+                    url, ProcessingStatus.TIMEOUT_ERROR.value, round(t(), 2)
                 )
             )
             return
@@ -113,19 +102,23 @@ async def process_article(session, morph, charged_words, url, results):
 
     results.append(
         ArticleAnalyseStats(
-            url, ProcessingStatus.OK.value, t(), rate, len(article_words)
+            url=url,
+            status=ProcessingStatus.OK.value,
+            time_took=round(t(), 2),
+            rate=rate,
+            words_count=len(article_words),
         )
     )
 
 
-async def main():
+async def analyse_articles(urls):
     morph = pymorphy2.MorphAnalyzer()
     charged_words = await gather_charged_words(morph)
     results = []
 
     async with aiohttp.ClientSession() as session:
         async with anyio.create_task_group() as tg:
-            for url in TEST_ARTICLES:
+            for url in urls:
                 tg.start_soon(
                     process_article,
                     session,
@@ -135,20 +128,4 @@ async def main():
                     results,
                 )
 
-    for result in results:
-        print('URL:', result.url)
-        print('Status', result.status)
-        print('Rate:', result.rate)
-        print('Number of words:', result.words_count)
-        logger.info(f'Анализ закончен за {result.time_took:.2f} сек')
-        print()
-
-
-if __name__ == '__main__':
-    logging.basicConfig(
-        format=u'%(levelname)s:%(message)s',
-        level=logging.INFO,
-    )
-    logger = logging.getLogger(__name__)
-
-    asyncio.run(main())
+    return results
