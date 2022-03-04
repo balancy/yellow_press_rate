@@ -9,6 +9,7 @@ from typing import Optional
 import aiofiles
 import aiohttp
 import anyio
+import async_timeout
 import pymorphy2
 
 from adapters.exceptions import ArticleNotFound
@@ -28,6 +29,7 @@ TEST_ARTICLES = [
     'https://lenta.ru/brief/2021/08/26/afg_terror/',
     'just_some_phrase',
 ]
+TIMEOUT = 3
 
 
 class ProcessingStatus(Enum):
@@ -38,12 +40,12 @@ class ProcessingStatus(Enum):
 
 
 @dataclass
-class ArticleFetchingStats:
+class ArticleAnalyseStats:
     url: str
     status: str
+    time_took: float = 0.0
     rate: Optional[float] = None
     words_count: Optional[int] = None
-    time_took: float = 0.0
 
 
 @contextmanager
@@ -65,10 +67,10 @@ async def extract_file_content(filename):
 
 async def gather_charged_words(morph):
     negative_text = await extract_file_content(NEGATIVE_WORDS_PATH)
-    negative_words = split_by_words(morph, negative_text)
+    negative_words = await split_by_words(morph, negative_text)
 
     positive_text = await extract_file_content(POSITIVE_WORDS_PATH)
-    positive_words = split_by_words(morph, positive_text)
+    positive_words = await split_by_words(morph, positive_text)
 
     return [*negative_words, *positive_words]
 
@@ -78,12 +80,12 @@ async def process_article(session, morph, charged_words, url, results):
         article_html = await fetch(session, url)
     except aiohttp.ClientError:
         results.append(
-            ArticleFetchingStats(url, ProcessingStatus.FETCH_ERROR.value)
+            ArticleAnalyseStats(url, ProcessingStatus.FETCH_ERROR.value)
         )
         return
     except asyncio.exceptions.TimeoutError:
         results.append(
-            ArticleFetchingStats(url, ProcessingStatus.TIMEOUT_ERROR.value)
+            ArticleAnalyseStats(url, ProcessingStatus.TIMEOUT_ERROR.value)
         )
         return
 
@@ -91,18 +93,27 @@ async def process_article(session, morph, charged_words, url, results):
         article_text = sanitize(article_html, plaintext=True)
     except ArticleNotFound:
         results.append(
-            ArticleFetchingStats(url, ProcessingStatus.PARSE_ERROR.value)
+            ArticleAnalyseStats(url, ProcessingStatus.PARSE_ERROR.value)
         )
         return
 
     with timeit() as t:
-        article_words = split_by_words(morph, article_text)
+        try:
+            async with async_timeout.timeout(TIMEOUT):
+                article_words = await split_by_words(morph, article_text)
+        except asyncio.TimeoutError:
+            results.append(
+                ArticleAnalyseStats(
+                    url, ProcessingStatus.TIMEOUT_ERROR.value, t()
+                )
+            )
+            return
 
     rate = calculate_yellow_press_rate(article_words, charged_words)
 
     results.append(
-        ArticleFetchingStats(
-            url, ProcessingStatus.OK.value, rate, len(article_words), t()
+        ArticleAnalyseStats(
+            url, ProcessingStatus.OK.value, t(), rate, len(article_words)
         )
     )
 
