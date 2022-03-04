@@ -1,6 +1,9 @@
 import asyncio
+from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import Enum
+import logging
+from time import perf_counter
 from typing import Optional
 
 import aiofiles
@@ -40,6 +43,13 @@ class ArticleFetchingStats:
     status: str
     rate: Optional[float] = None
     words_count: Optional[int] = None
+    time_took: float = 0.0
+
+
+@contextmanager
+def timeit() -> float:
+    start = perf_counter()
+    yield lambda: perf_counter() - start
 
 
 async def fetch(session, url):
@@ -85,13 +95,14 @@ async def process_article(session, morph, charged_words, url, results):
         )
         return
 
-    article_words = split_by_words(morph, article_text)
+    with timeit() as t:
+        article_words = split_by_words(morph, article_text)
 
     rate = calculate_yellow_press_rate(article_words, charged_words)
 
     results.append(
         ArticleFetchingStats(
-            url, ProcessingStatus.OK.value, rate, len(article_words)
+            url, ProcessingStatus.OK.value, rate, len(article_words), t()
         )
     )
 
@@ -118,7 +129,15 @@ async def main():
         print('Status', result.status)
         print('Rate:', result.rate)
         print('Number of words:', result.words_count)
+        logger.info(f'Анализ закончен за {result.time_took:.2f} сек')
         print()
 
 
-asyncio.run(main())
+if __name__ == '__main__':
+    logging.basicConfig(
+        format=u'%(levelname)s:%(message)s',
+        level=logging.INFO,
+    )
+    logger = logging.getLogger(__name__)
+
+    asyncio.run(main())
